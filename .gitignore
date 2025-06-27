@@ -1,0 +1,18 @@
+# general things to ignore
+build/
+*.egg-info/
+*.egg
+*.py[cod]
+__pycache__/
+*.so
+*~
+venv/
+.venv/
+.vscode/
+.clinerules/
+*.log
+
+# due to using nox and pytest
+.nox
+.cache
+.pytest_cache
