@@ -25,7 +25,12 @@ class BrowserUI:
         self._is_used = False
         self._port = port
         self._stop_event = Event()
-        self._static_dir = Path(get_caller_file_abs_path()).parent.joinpath(static_dir)
+        # check if static_dir is a absolute path
+        if Path(static_dir).is_absolute():
+            self._static_dir = Path(static_dir)
+        else:
+            self._static_dir = Path(get_caller_file_abs_path())\
+                               .parent.joinpath(static_dir)
         self._thread = Thread(target=self._run)
 
         self._app = Bottle()
