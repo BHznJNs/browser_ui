@@ -1,15 +1,16 @@
+import queue
+import webbrowser
 import importlib.resources as pkg_resources
 from typing import Callable
-import webbrowser
 from pathlib import Path
-from threading import Thread
+from threading import Thread, Event
 from cheroot import wsgi
-from bottle import Bottle, abort, request, static_file
+from bottle import Bottle, abort, request, static_file, response
 
 from browser_ui.utils import SerializableCallable, EventType
 from .utils import get_caller_file_abs_path
 
-INJECTED_SCRIPT_PATH = pkg_resources.files('browser_ui').joinpath("injected_script.js")
+INJECTED_SCRIPT_PATH = pkg_resources.files("browser_ui").joinpath("injected_script.js")
 with open(str(INJECTED_SCRIPT_PATH), "r") as f:
     INJECTED_SCRIPT = f.read()
 
@@ -23,6 +24,7 @@ class BrowserUI:
     def __init__(self, static_dir: str, port: int = 8080):
         self._is_used = False
         self._port = port
+        self._stop_event = Event()
         self._static_dir = Path(get_caller_file_abs_path()).parent.joinpath(static_dir)
         self._thread = Thread(target=self._run)
 
@@ -30,10 +32,12 @@ class BrowserUI:
         self._method_map: dict[str, SerializableCallable] = {}
         self._event_map: dict[EventType, list[SerializableCallable]] = {}
         self._server = server_factory(self._app, port)
+        self._sse_queue = queue.Queue()
         self._app.route("/", callback=self._serve_static_file)
         self._app.route("/<path:path>", callback=self._serve_static_file)
         self._app.route("/__method__/<method_name>", method="POST", callback=self._serve_method)
         self._app.route("/__event__/<event_name>", method="POST", callback=self._serve_event)
+        self._app.route("/__sse__", callback=self._serve_sse)
 
     def _run(self):
         try:
@@ -66,6 +70,15 @@ class BrowserUI:
         for callback in self._event_map[event]:
             callback()
 
+    def _serve_sse(self):
+        response.set_header("Content-Type", "text/event-stream")
+        response.set_header("Cache-Control", "no-cache")
+        while not self._stop_event.is_set():
+            try:
+                event, data = self._sse_queue.get(timeout=0.01)
+                yield f"event: {event}\ndata: {data}\n\n"
+            except queue.Empty: continue
+
     def add_event_listener(self, event_type: EventType, callback: Callable):
         if event_type not in self._event_map:
             self._event_map[event_type] = []
@@ -74,6 +87,9 @@ class BrowserUI:
     def register(self, method_name: str, method: SerializableCallable):
         self._method_map[method_name] = method
 
+    def send_event(self, event: str, data: str):
+        self._sse_queue.put((event, data))
+
     def start(self):
         if self._is_used:
             raise RuntimeError("This BrowserUI instance has already been used and cannot be reused.")
@@ -81,6 +97,7 @@ class BrowserUI:
         webbrowser.open_new_tab(f"http://localhost:{self._port}")
 
     def stop(self):
+        self._stop_event.set()
         self._server.stop()
         self._thread.join()
         self._is_used = True
