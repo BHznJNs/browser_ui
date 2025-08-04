@@ -1,15 +1,20 @@
 import queue
+import re
 import webbrowser
+import requests
 import importlib.resources as pkg_resources
 from typing import Callable
 from pathlib import Path
+from urllib.parse import urljoin
 from threading import Thread, Event
 from cheroot import wsgi
-from bottle import Bottle, abort, request, static_file, response
+from bottle import Bottle, abort, request, static_file, response, redirect
 
 from browser_ui.utils import SerializableCallable, EventType
 from .utils import get_caller_file_abs_path
 
+HEAD_RE = re.compile(r"(<\s*head\b[^>]*>)", re.IGNORECASE)
+BODY_RE = re.compile(r"(<\s*body\b[^>]*>)", re.IGNORECASE)
 INJECTED_SCRIPT_PATH = pkg_resources.files("browser_ui").joinpath("injected_script.js")
 with open(str(INJECTED_SCRIPT_PATH), "r") as f:
     INJECTED_SCRIPT = f.read()
@@ -21,16 +26,36 @@ def server_factory(app: Bottle, port: int, server_name: str='browser-ui-server')
     )
 
 class BrowserUI:
-    def __init__(self, static_dir: str, port: int = 8080):
+    def __init__(self,
+        static_dir: str | None = None,
+        port: int = 8080,
+        dev_server_url: str | None = None,
+    ):
+        """_summary_
+
+        Args:
+            static_dir (str | None): _description_. The target static directory.
+            port (int, optional): _description_. Defaults to 8080.
+            dev_server_url (str | None, optional): _description_. Defaults to None.
+                The argument specifies the dev server, which is useful when this framework works with frontend scaffolds like Vite. 
+                If this argument is specified, the static_dir argument will be ignored.
+        """
+        if static_dir is None and dev_server_url is None:
+            raise ValueError("Either static_dir or dev_server_url must be specified.")
+
+        if dev_server_url is None:
+            assert static_dir is not None
+            self._static_dir = self._resolve_static_dir_path(static_dir)
+            self._dev_server_url = None
+            self._is_dev = False
+        else:
+            self._dev_server_url = dev_server_url
+            self._static_dir = None
+            self._is_dev = True
+
         self._is_used = False
         self._port = port
         self._stop_event = Event()
-        # check if static_dir is a absolute path
-        if Path(static_dir).is_absolute():
-            self._static_dir = Path(static_dir)
-        else:
-            self._static_dir = Path(get_caller_file_abs_path())\
-                               .parent.joinpath(static_dir)
         self._thread = Thread(target=self._run)
 
         self._app = Bottle()
@@ -44,6 +69,22 @@ class BrowserUI:
         self._app.route("/__event__/<event_name>", method="POST", callback=self._serve_event)
         self._app.route("/__sse__", callback=self._serve_sse)
 
+    @staticmethod
+    def _resolve_static_dir_path(static_dir: str) -> Path:
+        if Path(static_dir).is_absolute():
+            return Path(static_dir)
+        else:
+            return Path(get_caller_file_abs_path(1)).parent.joinpath(static_dir)
+
+    @staticmethod
+    def _inject_script(html: str) -> str:
+        SCRIPT = f"<script>{INJECTED_SCRIPT}</script>"
+        if HEAD_RE.search(html):
+            return HEAD_RE.sub(r"\1" + SCRIPT, html, 1)
+        if BODY_RE.search(html):
+            return BODY_RE.sub(r"\1" + SCRIPT, html, 1)
+        return SCRIPT + html
+
     def _run(self):
         try:
             self._server.prepare()
@@ -52,14 +93,25 @@ class BrowserUI:
             print(f"Server error: {e}")
 
     def _serve_html_file(self, path: str) -> str:
-        with open(str(Path(self._static_dir).joinpath(path)), "r") as f:
-            html_content = f.read()
-        return html_content.replace("<body>", f"""<body><script>{INJECTED_SCRIPT}</script>""")
+        if self._is_dev:
+            assert self._dev_server_url is not None
+            response = requests.get(urljoin(self._dev_server_url, path))
+            html_content = response.text
+        else:
+            assert self._static_dir is not None
+            with open(str(self._static_dir.joinpath(path)), "r") as f:
+                html_content = f.read()
+        return self._inject_script(html_content)
 
     def _serve_static_file(self, path: str="index.html"):
         if path.endswith(".html") or path.endswith(".htm"):
             return self._serve_html_file(path)
-        return static_file(path, root=self._static_dir)
+        if self._is_dev:
+            assert self._dev_server_url is not None
+            return redirect(urljoin(self._dev_server_url, path))
+        else:
+            assert self._static_dir is not None
+            return static_file(path, root=self._static_dir)
 
     def _serve_method(self, method_name: str):
         data = request.json

@@ -26,7 +26,7 @@ class TestBrowserUI(unittest.TestCase):
     def test_absolute_static_dir(self, mock_get_caller):
         # Arrange
         absolute_path_str = os.path.abspath('/absolute/path/to/static')
-        
+
         # Act
         ui = BrowserUI(static_dir=absolute_path_str)
         
