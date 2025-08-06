@@ -8,9 +8,9 @@ from pathlib import Path
 from urllib.parse import urljoin
 from threading import Thread, Event
 from cheroot import wsgi
-from bottle import Bottle, abort, request, static_file, response, redirect
+from bottle import Bottle, SimpleTemplate, abort, request, static_file, response, redirect
 
-from browser_ui.utils import SerializableCallable, EventType
+from browser_ui.utils import Serializable, SerializableCallable, EventType
 from .utils import get_caller_file_abs_path
 
 HEAD_RE = re.compile(r"(<\s*head\b[^>]*>)", re.IGNORECASE)
@@ -61,6 +61,7 @@ class BrowserUI:
         self._app = Bottle()
         self._method_map: dict[str, SerializableCallable] = {}
         self._event_map: dict[EventType, list[SerializableCallable]] = {}
+        self._format_map: dict[str, Serializable] = {}
         self._server = server_factory(self._app, port)
         self._sse_queue = queue.Queue()
         self._app.route("/", callback=self._serve_static_file)
@@ -86,11 +87,8 @@ class BrowserUI:
         return SCRIPT + html
 
     def _run(self):
-        try:
-            self._server.prepare()
-            self._server.serve()
-        except Exception as e:
-            print(f"Server error: {e}")
+        self._server.prepare()
+        self._server.serve()
 
     def _serve_html_file(self, path: str) -> str:
         if self._is_dev:
@@ -101,7 +99,9 @@ class BrowserUI:
             assert self._static_dir is not None
             with open(str(self._static_dir.joinpath(path)), "r") as f:
                 html_content = f.read()
-        return self._inject_script(html_content)
+        html_content = self._inject_script(html_content)
+        template = SimpleTemplate(html_content)
+        return template.render(self._format_map)
 
     def _serve_static_file(self, path: str="index.html"):
         if path.endswith(".html") or path.endswith(".htm"):
@@ -143,6 +143,10 @@ class BrowserUI:
 
     def register(self, method_name: str, method: SerializableCallable):
         self._method_map[method_name] = method
+
+    def resgiter_format(self, **args: Serializable):
+        for k, v in args.items():
+            self._format_map[k] = v
 
     def send_event(self, event: str, data: str):
         self._sse_queue.put((event, data))
