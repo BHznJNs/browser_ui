@@ -13,7 +13,7 @@ def on_close():
     print("on_close")
 
 ui = BrowserUI(dev_server_url="http://localhost:5173/")
-ui.register("test", test)
+ui.register_method("test", test)
 ui.add_event_listener(EventType.page_loaded, on_load)
 ui.add_event_listener(EventType.page_closed, on_close)
 ui.start()

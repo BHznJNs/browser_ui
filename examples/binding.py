@@ -7,7 +7,7 @@ def test(data: dict):
     return data["a"] + data["b"]
 
 ui = BrowserUI("./binding/")
-ui.register("test", test)
+ui.register_method("test", test)
 ui.start()
 
 if __name__ == "__main__":

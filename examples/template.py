@@ -3,7 +3,7 @@ import _import_package as _
 from browser_ui import BrowserUI, EventType
 
 ui = BrowserUI("./template/")
-ui.resgiter_format(name="Test")
+ui.register_template_vars(name="Test")
 ui.start()
 
 if __name__ == "__main__":

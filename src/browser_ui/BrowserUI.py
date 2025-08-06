@@ -141,10 +141,10 @@ class BrowserUI:
             self._event_map[event_type] = []
         self._event_map[event_type].append(callback)
 
-    def register(self, method_name: str, method: SerializableCallable):
+    def register_method(self, method_name: str, method: SerializableCallable):
         self._method_map[method_name] = method
 
-    def resgiter_format(self, **args: Serializable):
+    def register_template_vars(self, **args: Serializable):
         for k, v in args.items():
             self._format_map[k] = v
 
