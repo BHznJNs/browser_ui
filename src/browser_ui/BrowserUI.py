@@ -2,6 +2,7 @@ import queue
 import re
 import webbrowser
 import requests
+import json
 import importlib.resources as pkg_resources
 from typing import Callable
 from pathlib import Path
@@ -118,8 +119,8 @@ class BrowserUI:
         if method_name not in self._method_map:
             abort(404, f"Method {method_name} is not implemented.")
         res = self._method_map[method_name](data)
-        return res
-    
+        return json.dumps(res)
+
     def _serve_event(self, event_name: str):
         event = EventType.from_str(event_name)
         if event not in self._event_map:
@@ -151,11 +152,14 @@ class BrowserUI:
     def send_event(self, event: str, data: str):
         self._sse_queue.put((event, data))
 
-    def start(self):
+    def start(self, path: str | None = None):
         if self._is_used:
             raise RuntimeError("This BrowserUI instance has already been used and cannot be reused.")
         self._thread.start()
-        webbrowser.open_new_tab(f"http://localhost:{self._port}")
+        final_path = f"http://localhost:{self._port}"\
+                     if path is None else\
+                     urljoin(f"http://localhost:{self._port}", path)
+        webbrowser.open_new_tab(final_path)
 
     def stop(self):
         self._stop_event.set()
