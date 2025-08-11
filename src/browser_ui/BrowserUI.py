@@ -4,15 +4,16 @@ import webbrowser
 import requests
 import json
 import importlib.resources as pkg_resources
-from typing import Callable
+from typing import Callable, cast
 from pathlib import Path
 from urllib.parse import urljoin
 from threading import Thread, Event
+from inspect import isgeneratorfunction
 from cheroot import wsgi
 from bottle import Bottle, SimpleTemplate, abort, request, static_file, response, redirect
 
-from browser_ui.utils import Serializable, SerializableCallable, EventType
-from .utils import get_caller_file_abs_path
+from .utils import Serializable, SerializableCallable, GeneratorCallable, EventType,\
+                   get_caller_file_abs_path
 
 HEAD_RE = re.compile(r"(<\s*head\b[^>]*>)", re.IGNORECASE)
 BODY_RE = re.compile(r"(<\s*body\b[^>]*>)", re.IGNORECASE)
@@ -60,16 +61,22 @@ class BrowserUI:
         self._thread = Thread(target=self._run)
 
         self._app = Bottle()
-        self._method_map: dict[str, SerializableCallable] = {}
+        self._method_map: dict[str, SerializableCallable | GeneratorCallable] = {}
         self._event_map: dict[EventType, list[SerializableCallable]] = {}
         self._format_map: dict[str, Serializable] = {}
         self._server = server_factory(self._app, port)
-        self._sse_queue = queue.Queue()
+        self._sse_queue: queue.Queue[tuple[str, Serializable]] = queue.Queue()
         self._app.route("/", callback=self._serve_static_file)
         self._app.route("/<path:path>", callback=self._serve_static_file)
         self._app.route("/__method__/<method_name>", method="POST", callback=self._serve_method)
         self._app.route("/__event__/<event_name>", method="POST", callback=self._serve_event)
         self._app.route("/__sse__", callback=self._serve_sse)
+
+        @self._app.hook('after_request')  
+        def _set_no_cache():
+            response.set_header('Cache-Control', 'no-cache, no-store, must-revalidate')  
+            response.set_header('Pragma', 'no-cache')  
+            response.set_header('Expires', '0')
 
     @staticmethod
     def _resolve_static_dir_path(static_dir: str) -> Path:
@@ -118,8 +125,16 @@ class BrowserUI:
         data = request.json
         if method_name not in self._method_map:
             abort(404, f"Method {method_name} is not implemented.")
-        res = self._method_map[method_name](data)
-        return json.dumps(res)
+
+        method = self._method_map[method_name]
+
+        if isgeneratorfunction(method):
+            response.set_header("X-BrowserUI-Stream-Response", "true")
+            for res in cast(GeneratorCallable, method)(data):
+                yield json.dumps(res)
+        else:
+            res = cast(SerializableCallable, method)(data)
+            return json.dumps(res)
 
     def _serve_event(self, event_name: str):
         event = EventType.from_str(event_name)
@@ -134,7 +149,7 @@ class BrowserUI:
         while not self._stop_event.is_set():
             try:
                 event, data = self._sse_queue.get(timeout=0.01)
-                yield f"event: {event}\ndata: {data}\n\n"
+                yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
             except queue.Empty: continue
 
     def add_event_listener(self, event_type: EventType, callback: Callable):
@@ -142,14 +157,14 @@ class BrowserUI:
             self._event_map[event_type] = []
         self._event_map[event_type].append(callback)
 
-    def register_method(self, method_name: str, method: SerializableCallable):
+    def register_method(self, method_name: str, method: SerializableCallable | GeneratorCallable):
         self._method_map[method_name] = method
 
     def register_template_vars(self, **args: Serializable):
         for k, v in args.items():
             self._format_map[k] = v
 
-    def send_event(self, event: str, data: str):
+    def send_event(self, event: str, data: Serializable):
         self._sse_queue.put((event, data))
 
     def start(self, path: str | None = None):
