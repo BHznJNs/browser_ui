@@ -1,9 +1,7 @@
 import queue
-import re
 import webbrowser
 import requests
 import json
-import importlib.resources as pkg_resources
 from typing import Callable, cast
 from pathlib import Path
 from urllib.parse import urljoin
@@ -12,14 +10,8 @@ from inspect import isgeneratorfunction
 from cheroot import wsgi
 from bottle import Bottle, SimpleTemplate, abort, request, static_file, response, redirect
 
-from .utils import Serializable, SerializableCallable, GeneratorCallable, EventType,\
-                   get_caller_file_abs_path
-
-HEAD_RE = re.compile(r"(<\s*head\b[^>]*>)", re.IGNORECASE)
-BODY_RE = re.compile(r"(<\s*body\b[^>]*>)", re.IGNORECASE)
-INJECTED_SCRIPT_PATH = pkg_resources.files("browser_ui").joinpath("injected_script.js")
-with open(str(INJECTED_SCRIPT_PATH), "r") as f:
-    INJECTED_SCRIPT = f.read()
+from .types import Serializable, SerializableCallable, GeneratorCallable, EventType
+from .utils import inject_script, get_caller_file_abs_path
 
 def server_factory(app: Bottle, port: int, server_name: str='browser-ui-server') -> wsgi.Server:
     return wsgi.Server(
@@ -85,15 +77,6 @@ class BrowserUI:
         else:
             return Path(get_caller_file_abs_path(1)).parent.joinpath(static_dir)
 
-    @staticmethod
-    def _inject_script(html: str) -> str:
-        SCRIPT = f"<script>{INJECTED_SCRIPT}</script>"
-        if HEAD_RE.search(html):
-            return HEAD_RE.sub(r"\1" + SCRIPT, html, 1)
-        if BODY_RE.search(html):
-            return BODY_RE.sub(r"\1" + SCRIPT, html, 1)
-        return SCRIPT + html
-
     def _run(self):
         self._server.prepare()
         self._server.serve()
@@ -107,7 +90,7 @@ class BrowserUI:
             assert self._static_dir is not None
             with open(str(self._static_dir.joinpath(path)), "r") as f:
                 html_content = f.read()
-        html_content = self._inject_script(html_content)
+        html_content = inject_script(html_content)
         template = SimpleTemplate(html_content)
         return template.render(self._format_map)
 
