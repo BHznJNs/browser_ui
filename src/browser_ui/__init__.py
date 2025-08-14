@@ -1,2 +1,2 @@
 from .BrowserUI import BrowserUI
-from .utils import EventType
+from .types import EventType
