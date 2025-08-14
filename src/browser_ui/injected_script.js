@@ -44,23 +44,38 @@ window.addEventListener("DOMContentLoaded", () => {
   fetch("/__event__/page_loaded", { method: "POST" });
 });
 
-// start SSE client
-const eventSource = new EventSource("/__sse__");
-eventSource.onerror = function (err) {
-  console.error("EventSource failed:", err);
-};
-globalThis.backendListener = {
-  on: (event, callback) => {
-    eventSource.addEventListener(event, (e) => {
-      callback(e.data);
-    });
-  },
-  off: (event, callback) => {
-    eventSource.removeEventListener(event, callback);
-  },
-  once: (event, callback) => {
-    eventSource.addEventListener(event, callback, {
-      once: true
-    });
-  },
-};
+// Initialize the backend SSE connection
+globalThis.backendListener = (function connectBackendSSE() {
+  const eventSource = new EventSource("/__sse__");
+
+  eventSource.onopen = function () {
+    console.log("BrowserUI SSE connection established.");
+  };
+
+  eventSource.onerror = function (err) {
+    console.error("BrowserUI EventSource failed:", err);
+    // Close the old connection and try to reconnect after 1 second.
+    eventSource.close();
+    setTimeout(connectBackendSSE, 1000);
+  };
+
+  return {
+    on: (event, callback) => {
+      eventSource.addEventListener(event, (e) => {
+        callback(e.data);
+      });
+    },
+    off: (event, callback) => {
+      eventSource.removeEventListener(event, callback);
+    },
+    once: (event, callback) => {
+      eventSource.addEventListener(event, callback, {
+        once: true
+      });
+    },
+    // Expose a close method to be called on pagehide
+    close: () => {
+      eventSource.close();
+    }
+  };
+})();
